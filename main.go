@@ -116,6 +116,13 @@ func main() {
 					},
 				)
 			}
+			for _, pool := range pools {
+				state, ok := cache.Get(pool.Address)
+				if !ok {
+					log.Fatal("error fetching state from cache")
+				}
+				fmt.Printf("Name: %s, Reserve0: %s, Reserve1: %s, BlockNumber: %s, UpdatedAt: %s \n", state.Name, state.Reserve0.String(), state.Reserve1.String(), state.BlockNumber, state.UpdatedAt.Format(time.RFC3339))
+			}
 		case err := <-sub.Err():
 			log.Fatalf("Subscribption error %v", err)
 
@@ -131,4 +138,12 @@ func (c *StateCache) Set(address common.Address, state PoolState) {
 		c.pools = make(map[common.Address]PoolState)
 	}
 	c.pools[address] = state
+}
+
+func (c *StateCache) Get(address common.Address) (PoolState, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	poolState, ok := c.pools[address]
+	return poolState, ok
+
 }
