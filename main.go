@@ -42,6 +42,7 @@ func main() {
 		log.Fatalf("error dialing anvil: %v", err)
 	}
 	defer client.Close()
+	var cache StateCache
 
 	headers := make(chan *types.Header)
 
@@ -93,10 +94,41 @@ func main() {
 				log.Println("Invalid header received")
 				continue
 			}
+			for _, pool := range pools {
+				callCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				callOpts := &bind.CallOpts{
+					Context:     callCtx,
+					BlockNumber: header.Number,
+				}
+				reserves, err := pool.Contract.GetReserves(callOpts)
+				cancel()
+				if err != nil {
+					log.Fatal("error fetching reserves")
+				}
+				cache.Set(
+					pool.Address,
+					PoolState{
+						Name:        pool.Name,
+						Reserve0:    reserves.Reserve0,
+						Reserve1:    reserves.Reserve1,
+						BlockNumber: header.Number.Uint64(),
+						UpdatedAt:   time.Now(),
+					},
+				)
+			}
 		case err := <-sub.Err():
 			log.Fatalf("Subscribption error %v", err)
 
 		}
 	}
 
+}
+
+func (c *StateCache) Set(address common.Address, state PoolState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pools == nil {
+		c.pools = make(map[common.Address]PoolState)
+	}
+	c.pools[address] = state
 }
