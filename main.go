@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"log"
 	"math/big"
+	"searcher-bot/contracts/erc20"
 	"searcher-bot/contracts/uniswapv2pair"
 	"sync"
 	"time"
@@ -34,6 +35,11 @@ type StateCache struct {
 	pools map[common.Address]PoolState
 }
 
+type DecimalsCache struct {
+	mu       sync.RWMutex
+	decimals map[common.Address]uint8
+}
+
 func main() {
 	const rpcUrl = "ws://localhost:8545"
 	ctx := context.Background()
@@ -43,6 +49,7 @@ func main() {
 	}
 	defer client.Close()
 	var cache StateCache
+	var decimalsCache DecimalsCache
 
 	headers := make(chan *types.Header)
 
@@ -79,6 +86,8 @@ func main() {
 		}
 		pools[i].Token1 = token1
 		fmt.Printf("Bound %s at %s (token0 = %s   token1 = %s) \n", pools[i].Name, pools[i].Address.Hex(), pools[i].Token0.Hex(), pools[i].Token1.Hex())
+		decimalsCache.Fetch(client, ctx, token0)
+		decimalsCache.Fetch(client, ctx, token1)
 	}
 
 	fmt.Println("Listenning to new blocks....")
@@ -121,7 +130,9 @@ func main() {
 				if !ok {
 					log.Fatal("error fetching state from cache")
 				}
-				fmt.Printf("Name: %s, Reserve0: %s, Reserve1: %s, BlockNumber: %s, UpdatedAt: %s \n", state.Name, state.Reserve0.String(), state.Reserve1.String(), state.BlockNumber, state.UpdatedAt.Format(time.RFC3339))
+				fmt.Printf("Name: %s, Reserve0: %s, Reserve1: %s, BlockNumber: %v, UpdatedAt: %s \n",
+					state.Name, state.Reserve0.String(), state.Reserve1.String(),
+					state.BlockNumber, state.UpdatedAt.Format(time.RFC3339))
 			}
 		case err := <-sub.Err():
 			log.Fatalf("Subscribption error %v", err)
@@ -146,4 +157,35 @@ func (c *StateCache) Get(address common.Address) (PoolState, bool) {
 	poolState, ok := c.pools[address]
 	return poolState, ok
 
+}
+
+func (d *DecimalsCache) Get(address common.Address) (uint8, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	dec, ok := d.decimals[address]
+	return dec, ok
+}
+
+func (d *DecimalsCache) Fetch(client *ethclient.Client, ctx context.Context, address common.Address) {
+	if _, ok := d.Get(address); ok {
+		return
+	}
+
+	ercContract, err := erc20.NewErc20(address, client)
+	if err != nil {
+		log.Fatal("error binding new erc20 token")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	callOpts := &bind.CallOpts{
+		Context: ctx,
+	}
+	decimals, err := ercContract.Decimals(callOpts)
+	if err != nil {
+		log.Fatal("error fetching decimals")
+	}
+	if d.decimals == nil {
+		d.decimals = make(map[common.Address]uint8)
+	}
+	d.decimals[address] = decimals
 }
