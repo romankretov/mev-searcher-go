@@ -4,23 +4,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"log"
-	"searcher-bot/contracts/uniswapv2pair"
 	"searcher-bot/internal/cache"
 	"searcher-bot/internal/target"
 	"time"
 )
-
-type PoolTarget struct {
-	Name     string
-	Address  common.Address
-	Contract *uniswapv2pair.UniswapV2Pair
-	Token0   common.Address
-	Token1   common.Address
-}
 
 func main() {
 	const rpcUrl = "ws://localhost:8545"

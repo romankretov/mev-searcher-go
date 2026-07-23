@@ -20,7 +20,7 @@ type PoolTarget struct {
 func LoadTargets(ctx context.Context, client *ethclient.Client, targets map[string]string, decimalsCache *cache.DecimalsCache) []PoolTarget {
 	poolTargets := []PoolTarget{}
 	for k, v := range targets {
-		contract, err := uniswapv2pair.NewUniswapV2Pair(common.HexToAddress(k), client)
+		contract, err := uniswapv2pair.NewUniswapV2Pair(common.HexToAddress(v), client)
 		if err != nil {
 			continue
 		}
