@@ -7,8 +7,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"log"
+	"math/big"
 	"searcher-bot/internal/cache"
 	"searcher-bot/internal/target"
+	"searcher-bot/internal/util"
 	"time"
 )
 
@@ -80,6 +82,12 @@ func main() {
 				fmt.Printf("Name: %s, Reserve0: %s, Reserve1: %s, BlockNumber: %v, UpdatedAt: %s \n",
 					state.Name, state.Reserve0.String(), state.Reserve1.String(),
 					state.BlockNumber, state.UpdatedAt.Format(time.RFC3339))
+				dec0, _ := decimalsCache.Get(pool.Token0)
+				dec1, _ := decimalsCache.Get(pool.Token1)
+				res0 := util.ConvertUnits(state.Reserve0, dec0)
+				res1 := util.ConvertUnits(state.Reserve1, dec1)
+				price := new(big.Rat).Quo(res0, res1)
+				fmt.Printf("Price: %v \n", price.FloatString(2))
 			}
 		case err := <-sub.Err():
 			log.Fatalf("Subscribption error %v", err)
