@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"fmt"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -54,50 +55,60 @@ func (w *Watcher) Run(ctx context.Context) error {
 		Topics:    [][]common.Hash{{syncTopic}},
 	}
 
-	logs := make(chan types.Log)
-	headers := make(chan *types.Header)
-
-	subHeaders, err := w.client.SubscribeNewHead(ctx, headers)
-	if err != nil {
-		log.Fatal("Couldn't subscribe to new headers")
-	}
-	defer subHeaders.Unsubscribe()
-	sub, err := w.client.SubscribeFilterLogs(ctx, query, logs)
-	if err != nil {
-		log.Fatal("Couldn't subscribe to the logs")
-	}
-	defer sub.Unsubscribe()
-
 	const reconcileEvery = 5
 	var blockCount uint64
+	attempt := 0
 
-	log.Println("Listening to sync events")
 	for {
-		select {
-		case vLog, ok := <-logs:
-			if !ok {
-				log.Println("Channel closed")
-				return nil
-			}
-			w.handleSyncLog(vLog)
-
-		case header, ok := <-headers:
-			if !ok {
-				log.Println("Header channel closed")
-				return nil
-			}
-			blockCount++
-			if blockCount%reconcileEvery == 0 {
-				w.reconcile(ctx, header.Number.Uint64())
-			}
-
-		case err := <-sub.Err():
-			log.Println("subscription error")
-			return err
-		case err := <-subHeaders.Err():
-			log.Println("subscription error to headers")
-			return err
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
+		logs, subLog, headers, subHeader, err := w.subscribe(ctx, query)
+		if err != nil {
+			log.Printf("subscribe failed (attempt %v): %v \n", attempt+1, err)
+			time.Sleep(nextRetry(attempt))
+			attempt++
+			continue
+		}
+		attempt = 0
+		log.Println("listening to sync event")
+		runErr := func() error {
+			defer subLog.Unsubscribe()
+			defer subHeader.Unsubscribe()
+
+			for {
+				select {
+				case vLog, ok := <-logs:
+					if !ok {
+						return fmt.Errorf("log channel closed")
+					}
+					w.handleSyncLog(vLog)
+				case header, ok := <-headers:
+					if !ok {
+						return fmt.Errorf("header channel closed")
+					}
+					blockCount++
+					if blockCount%reconcileEvery == 0 {
+						w.reconcile(ctx, header.Number.Uint64())
+					}
+				case err := <-subLog.Err():
+					return fmt.Errorf("log subscription errror: %v", err)
+				case err := <-subHeader.Err():
+					return fmt.Errorf("header subscription error %v", err)
+				case <-ctx.Done():
+					return ctx.Err()
+
+				}
+
+			}
+		}()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		log.Printf("subscription dropped, reconnecting: %v \n", runErr)
+		time.Sleep(nextRetry(attempt))
+		attempt++
+
 	}
 }
 
@@ -154,5 +165,33 @@ func (w *Watcher) reconcile(ctx context.Context, blockNumber uint64) {
 		)
 		log.Printf("reconciled: pool=%v, block=%v, reserve0=%v, reserve1=%v \n", p.Name, blockNumber, reserves.Reserve0.String(), reserves.Reserve1.String())
 	}
+
+}
+
+func (w *Watcher) subscribe(ctx context.Context, query ethereum.FilterQuery) (
+	logs chan types.Log, logSub ethereum.Subscription, headers chan *types.Header, headerSub ethereum.Subscription, err error,
+) {
+	logs = make(chan types.Log)
+	logSub, err = w.client.SubscribeFilterLogs(ctx, query, logs)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("error subscribing to filter logs: %v", err)
+	}
+
+	headers = make(chan *types.Header)
+	headerSub, err = w.client.SubscribeNewHead(ctx, headers)
+	if err != nil {
+		logSub.Unsubscribe()
+		return nil, nil, nil, nil, fmt.Errorf("error subscribing to new headers: %v", err)
+	}
+
+	return logs, logSub, headers, headerSub, nil
+}
+
+func nextRetry(attempt int) time.Duration {
+	delay := time.Duration(1<<attempt) * time.Second
+	if delay.Seconds() > 30 {
+		return time.Duration(30)
+	}
+	return delay
 
 }
